@@ -36,26 +36,6 @@ class ExtendedDict(dict):
         for key, value in self.items():
             self[key] = value
 
-    def _check_type(self, value):
-        if hasattr(value, 'keys'):
-            return self._convert_dict(value)
-        elif isinstance(value, (list, tuple)):
-            return self._convert_iterable(value)
-        return value
-
-    def _convert_dict(self, dictionary):
-        result = self.__class__(dictionary)
-        for key, value in result.items():
-            result[key] = self._check_type(value)
-        return result
-
-    def _convert_iterable(self, iterable):
-        new = [self._check_type(item) for item in iterable]
-        return tuple(new) if isinstance(iterable, tuple) else new
-
-    def __iter__(self):
-        return iter(self.keys())
-
     def __getattr__(self, item):
         if item in self.keys():
             return self[item]
@@ -66,7 +46,7 @@ class ExtendedDict(dict):
         self[key] = value
 
     def __setitem__(self, key, value):
-        dict.__setitem__(self, key, self._check_type(value))
+        dict.__setitem__(self, key, DictConverter.convert(value, self.__class__))
 
     def __mul__(self, other):
         """
@@ -90,16 +70,23 @@ class ExtendedDict(dict):
         return new
 
     def add(self, __m=None, /, **kwargs):
-        """Adds provided dictionary to current and returns new instance of ExtendedDict."""
+        """Adds provided dictionary to current and returns new copy of ExtendedDict."""
         new = self.__class__(self)
         new.update(__m, **kwargs)
         return new
 
+    def replace(self, key, value):
+        """Return new copy of ExtendedDict and replace provided key in it."""
+        new = self.__class__(self)
+        new[key] = value
+        return new
+
     def update(self, __m=None, /, **kwargs) -> None:
         if __m:
-            dict.update(self, self._check_type(__m), **self._convert_dict(kwargs))
+            dict.update(self, DictConverter.convert(__m, self.__class__),
+                        **DictConverter.convert(kwargs, self.__class__))
         else:
-            dict.update(self, **self._convert_dict(kwargs))
+            dict.update(self, **DictConverter.convert(kwargs, self.__class__))
 
     def copy(self):
         return self.__class__(dict.copy(self))
@@ -145,3 +132,34 @@ class TupleDict(ExtendedDict):
         for key in keys:
             new.pop(key, None)
         return new[:]
+
+
+class DictConverter:
+    """"""
+
+    dest_class = ExtendedDict
+
+    @classmethod
+    def convert(cls, source, dest_class):
+        cls.dest_class = dest_class
+        return cls._check_type(source)
+
+    @classmethod
+    def _check_type(cls, value):
+        if hasattr(value, 'keys'):
+            return cls._convert_dict(value)
+        elif isinstance(value, (list, tuple, set)):
+            return cls._convert_array(value)
+        return value
+
+    @classmethod
+    def _convert_dict(cls, dictionary):
+        result = cls.dest_class(dictionary)
+        for key, value in result.items():
+            result[key] = cls._check_type(value)
+        return result
+
+    @classmethod
+    def _convert_array(cls, array):
+        t = type(array)
+        return t([cls._check_type(item) for item in array])
