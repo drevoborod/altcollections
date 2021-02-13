@@ -1,3 +1,9 @@
+from copy import deepcopy
+
+
+ARRAYS = (list, tuple, set)
+
+
 class ExtendedDict(dict):
     """
     Расширение базового словаря. Новые возможности:
@@ -36,6 +42,9 @@ class ExtendedDict(dict):
         for key, value in self.items():
             self[key] = value
 
+    def __deepcopy__(self, memo):
+        return self.__class__(deepcopy(dict(self), memo=memo))
+
     def __getattr__(self, item):
         if item in self.keys():
             return self[item]
@@ -46,14 +55,14 @@ class ExtendedDict(dict):
         self[key] = value
 
     def __setitem__(self, key, value):
-        dict.__setitem__(self, key, DictConverter.convert(value, self.__class__))
+        dict.__setitem__(self, key, RecursiveConverter(value, self.__class__))
 
     def __mul__(self, other):
         """
         Returns new instance of ExtendedDict instantiated from 'self' where all
         values of root keys are multiplied on value of 'other' (not recursive).
         """
-        new = self.__class__(self)
+        new = self.copy()
         for key, value in new.items():
             try:
                 new[key] = value * other
@@ -64,32 +73,38 @@ class ExtendedDict(dict):
 
     def crop(self, *keys):
         """Deletes provided keys from the dictionary and returns new ExtendedDict."""
-        new = self.__class__(self)
+        new = self.copy()
         for key in keys:
             new.pop(key, None)
         return new
 
     def add(self, __m=None, /, **kwargs):
-        """Adds provided dictionary to current and returns new copy of ExtendedDict."""
-        new = self.__class__(self)
+        """Return new copy of ExtendedDict and add provided dictionary to it."""
+        new = self.copy()
         new.update(__m, **kwargs)
         return new
 
     def replace(self, key, value):
         """Return new copy of ExtendedDict and replace provided key in it."""
-        new = self.__class__(self)
+        new = self.copy()
         new[key] = value
         return new
 
     def update(self, __m=None, /, **kwargs) -> None:
         if __m:
-            dict.update(self, DictConverter.convert(__m, self.__class__),
-                        **DictConverter.convert(kwargs, self.__class__))
+            dict.update(self, RecursiveConverter(__m, self.__class__),
+                        **RecursiveConverter(kwargs, self.__class__))
         else:
-            dict.update(self, **DictConverter.convert(kwargs, self.__class__))
+            dict.update(self, **RecursiveConverter(kwargs, self.__class__))
 
     def copy(self):
-        return self.__class__(dict.copy(self))
+        """Works as copy.deepcopy()"""
+        return self.__class__(self)
+
+    def sort(self, reverse=False):
+        """Return new instance and recursively sort all dictionaries keys
+        and arrays inside it."""
+        return RecursiveSort(self, __reverse__=reverse)
 
 
 class TupleDict(ExtendedDict):
@@ -128,38 +143,132 @@ class TupleDict(ExtendedDict):
     def crop_astuple(self, *keys):
         """Deletes provided keys from the dictionary and
         returns tuple of values of new TupleDict."""
-        new = self.__class__(self)
-        for key in keys:
-            new.pop(key, None)
-        return new[:]
+        return self.crop(*keys)[:]
 
 
-class DictConverter:
-    """"""
+class ExtendedList(list):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    dest_class = ExtendedDict
+    def crop(self, __index: int = ...):
+        new = self.copy()
+        new.pop(__index)
+        return new
 
-    @classmethod
-    def convert(cls, source, dest_class):
-        cls.dest_class = dest_class
-        return cls._check_type(source)
 
-    @classmethod
-    def _check_type(cls, value):
+class _RecursiveConverter:
+    """Using convert() method one can convert dictionaries recursively."""
+
+    default_destination = ExtendedDict
+
+    def __init__(self):
+        self.dest_class = self.default_destination
+
+    def __call__(self, source, dest_class=default_destination):
+        self.dest_class = dest_class
+        return self._check_type(source)
+
+    def _check_type(self, value):
         if hasattr(value, 'keys'):
-            return cls._convert_dict(value)
-        elif isinstance(value, (list, tuple, set)):
-            return cls._convert_array(value)
+            return self._convert_dict(value)
+        elif isinstance(value, ARRAYS):
+            return self._convert_array(value)
         return value
 
-    @classmethod
-    def _convert_dict(cls, dictionary):
-        result = cls.dest_class(dictionary)
+    def _convert_dict(self, dictionary):
+        result = self.dest_class(dictionary)
         for key, value in result.items():
-            result[key] = cls._check_type(value)
+            result[key] = self._check_type(value)
         return result
 
-    @classmethod
-    def _convert_array(cls, array):
-        t = type(array)
-        return t([cls._check_type(item) for item in array])
+    def _convert_array(self, array):
+        return type(array)([self._check_type(item) for item in array])
+
+
+class _RecursiveSort:
+    """
+    Обеспечивает рекурсивную сортировку по алфавиту сложных вложенных структур.
+    Сортировке подвергаются ключи словаря и элементы последовательностей.
+    Если последовательность нельзя отсортировать, она остаётся несортированной.
+    На вход принимает следующие аргументы:
+    - позиционные аргументы: названия ключей вложенных словарей или
+        элементов последовательности, при обнаружении которых в словаре
+        или последовательности соответствующая структура будет исключена из сортировки.
+        Чтобы структура была исключена, в ней должны находиться все переданные элементы.
+    - именованные аргументы: список пар ключ=значение, при обнаружении которых
+        внутри вложенного словаря алгоритм не будет сортировать ключи этого словаря.
+        Чтобы словарь был исключён, в нём должны находиться все переданные пары.
+    - параметр __reverse__ (по умолчанию False): при значении True сортировка
+        осуществляется в обратном порядке.
+    """
+
+    def __init__(self):
+        self._exclude_items = set()
+        self._exclude_pairs = []
+        self._exclude_all = False
+        self._reverse = False
+
+    def __call__(self, data, *args, __reverse__=False, __exclude_all__=False):
+        self._exclude_items = set([x for x in args if not isinstance(x, ARRAYS)])
+        self._exclude_pairs = [tuple(x) for x in args if isinstance(x, ARRAYS)]
+        self._exclude_all = __exclude_all__
+        self._reverse = __reverse__
+        return self._check_type(data)
+
+    def _check_type(self, value):
+        if hasattr(value, 'keys'):
+            return self._sort_dict(value)
+        elif isinstance(value, ARRAYS):
+            return self._sort_array(value)
+        return value
+
+    def _check_items_exist(self, data):
+        try:
+            if self._exclude_all:
+                if set(data) & self._exclude_items == self._exclude_items:
+                    return True
+            else:
+                for item in self._exclude_items:
+                    if item in set(data):
+                        return True
+        except TypeError:
+            return True
+        return False
+
+    def _check_pairs_exist(self, data):
+        i = 0
+        for pair in self._exclude_pairs:
+            if pair in data.items():
+                if not self._exclude_all:
+                    return True
+                i += 1
+        if i > 0 and i == len(self._exclude_pairs):
+            return True
+        return False
+
+    def _sort_dict(self, data):
+        match = 0
+        if self._check_items_exist(data):
+            match += 1
+        if self._check_pairs_exist(data):
+            match += 1
+        result = data.items()
+        if (match == 0) or (self._exclude_all and match < 2):
+            result = sorted(result, reverse=self._reverse)
+        return type(data)([(key, self._check_type(value)) for key, value in result])
+
+    def _sort_array(self, array):
+        match = False
+        if self._exclude_items:
+            match = self._check_items_exist(array)
+        result = ([self._check_type(item) for item in array])
+        if not match:
+            try:
+                result = sorted(result, reverse=self._reverse)
+            except TypeError:
+                pass
+        return type(array)(result)
+
+
+RecursiveConverter = _RecursiveConverter()
+RecursiveSort = _RecursiveSort()
