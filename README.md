@@ -1,2 +1,2 @@
 # altcollections 
-Several classes which provide extended functionality of standart collections: dict and list.
+Several classes which add extended functionality to standard collections: dict and list.
