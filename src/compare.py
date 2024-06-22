@@ -1,6 +1,6 @@
 from deepdiff import DeepDiff
 
-from .collections import ExtendedDict, TupleDict
+from altcollections import ExtendedDict, TupleDict
 
 
 class DictDiff(DeepDiff):

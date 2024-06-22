@@ -6,34 +6,7 @@ ARRAYS = (list, tuple, set)
 
 class ExtendedDict(dict):
     """
-    Расширение базового словаря. Новые возможности:
-    - возможность доступа и добавления ключей через точечную нотацию.
-        То есть можно добавить как ключ (d['key'] = 1), а можно - как атрибут:
-        d.key1 = 2. Доступ после этого будет возможен как через ключ,
-        так и через атрибут: d['key'] или d.key. Для тех, кому надоело писать
-        скобочки и кавычки. При этом выгодное отличие от данных в виде объектов -
-        сохранение плюшек словаря: методы keys и items, итератор, update и т.д.
-    - поддержка операции умножения. При этом возвращается новый экземпляр
-        ExtendedDict, у которого все значения умножены на предоставленное число.
-        Удобно, когда нужно увеличить все значения в словаре на что-то одно.
-        Прочие арифметические операции пока не поддерживаются за ненадобностью,
-        но, может будет добавлено в будущем.
-    - новый метод crop: возвращает НОВЫЙ экземпляр ExtendedDict,
-        из которого выкинут соответствующий ключ.
-        Нужно для однострочников. Метод оригинального словаря pop меняет
-        исходный словарь, поэтому требуется создавать экземпляр словаря,
-        потом делать в нём pop отдельной строкой, а потом уже использовать
-        получившийся результат. А в ExtendedDict можно сделать так:
-        `return cls.date_time(**ExtendedDict(locals()).crop('cls')`
-        Здесь мы из словаря locals выкидываем ключ 'cls' и сразу же
-        к получившемуся результату применяем date_time(). Это удобно,
-        потому что не нужно заводить отдельную переменную вроде
-        "params = locals()" - у нас автоматически создаётся копия,
-        из которой при применении метода crop опять же возвращается копия.
-        В случае с pop нам бы вернулось значение удаляемого ключа, что далеко
-        не всегда нужно.
-    - новый метод add: расширение метода update, которое позволит не изменять
-        исходный словарь, а возвращать новый экземпляр с изменениями.
+    Alternative dictionary realization which supports dot notations.
     """
 
     def __init__(self, *args, **kwargs):
@@ -42,10 +15,19 @@ class ExtendedDict(dict):
         for key, value in self.items():
             self[key] = value
 
+    def __contains__(self, item):
+        return str(item) in self.keys()
+
     def __deepcopy__(self, memo):
         return self.__class__(deepcopy(dict(self), memo=memo))
 
+    def __missing__(self, key):
+        if isinstance(key, str):
+            raise KeyError(key)
+        return self[str(key)]
+
     def __getattr__(self, item):
+        item = str(item)
         if item in self.keys():
             return self[item]
         else:
@@ -55,7 +37,7 @@ class ExtendedDict(dict):
         self[key] = value
 
     def __setitem__(self, key, value):
-        dict.__setitem__(self, key, RecursiveConverter(value, self.__class__))
+        dict.__setitem__(self, str(key), RecursiveConverter(value, self.__class__))
 
     def __mul__(self, other):
         """
