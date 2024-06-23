@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import Iterable, Mapping
 
 
 ARRAYS = (list, tuple, set)
@@ -6,29 +7,48 @@ ARRAYS = (list, tuple, set)
 
 class ExtendedDict(dict):
     """
-    Alternative dictionary realization which supports dot notations.
+    Расширение базового словаря. Новые возможности:
+    - возможность доступа и добавления ключей через точечную нотацию.
+        То есть можно добавить как ключ (d['key'] = 1), а можно - как атрибут:
+        d.key1 = 2. Доступ после этого будет возможен как через ключ,
+        так и через атрибут: d['key'] или d.key. Для тех, кому надоело писать
+        скобочки и кавычки. При этом выгодное отличие от данных в виде объектов -
+        сохранение плюшек словаря: методы keys и items, итератор, update и т.д.
+    - поддержка операции умножения. При этом возвращается новый экземпляр
+        ExtendedDict, у которого все значения умножены на предоставленное число.
+        Удобно, когда нужно увеличить все значения в словаре на что-то одно.
+        Прочие арифметические операции пока не поддерживаются за ненадобностью,
+        но, может будет добавлено в будущем.
+    - новый метод crop: возвращает НОВЫЙ экземпляр ExtendedDict,
+        из которого выкинут соответствующий ключ.
+        Нужно для однострочников. Метод оригинального словаря pop меняет
+        исходный словарь, поэтому требуется создавать экземпляр словаря,
+        потом делать в нём pop отдельной строкой, а потом уже использовать
+        получившийся результат. А в ExtendedDict можно сделать так:
+        `return cls.date_time(**ExtendedDict(locals()).crop('cls')`
+        Здесь мы из словаря locals выкидываем ключ 'cls' и сразу же
+        к получившемуся результату применяем date_time(). Это удобно,
+        потому что не нужно заводить отдельную переменную вроде
+        "params = locals()" - у нас автоматически создаётся копия,
+        из которой при применении метода crop опять же возвращается копия.
+        В случае с pop нам бы вернулось значение удаляемого ключа, что далеко
+        не всегда нужно.
+    - новый метод add: расширение метода update, которое позволит не изменять
+        исходный словарь, а возвращать новый экземпляр с изменениями.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # All inner dictionaries will be recursively converted to ExtendedDict.
-        for key, value in self.items():
-            self[key] = value
-
-    def __contains__(self, item):
-        return str(item) in self.keys()
+    def __init__(self, seq: Mapping | Iterable = None, **kwargs):
+        super().__init__()
+        self.update(seq, **kwargs)
 
     def __deepcopy__(self, memo):
-        return self.__class__(deepcopy(dict(self), memo=memo))
-
-    def __missing__(self, key):
-        if isinstance(key, str):
-            raise KeyError(key)
-        return self[str(key)]
+        # Possibly incorrect implementation because shared structures are not handled correctly,
+        # so let's keep previous version just in case:
+        # return self.__class__(deepcopy(dict(self), memo=memo))
+        return self.copy()
 
     def __getattr__(self, item):
-        item = str(item)
-        if item in self.keys():
+        if item in self:
             return self[item]
         else:
             return dict.__getattribute__(self, item)
@@ -37,55 +57,64 @@ class ExtendedDict(dict):
         self[key] = value
 
     def __setitem__(self, key, value):
-        dict.__setitem__(self, str(key), RecursiveConverter(value, self.__class__))
+        # All inner dictionaries will be recursively converted to ExtendedDict.
+        dict.__setitem__(self, key, RecursiveConverter(value, self.__class__))
 
-    def __mul__(self, other):
+    def __mul__(self, other: int):
         """
         Returns new instance of ExtendedDict instantiated from 'self' where all
-        values of root keys are multiplied on value of 'other' (not recursive).
+        values of root keys are multiplied by value of 'other' (not recursive).
         """
+        if not isinstance(other, int):
+            raise TypeError(f"Can be multiplied only by integers, not by {type(other).__name__}")
         new = self.copy()
         for key, value in new.items():
             try:
                 new[key] = value * other
             except TypeError:
-                raise TypeError(f"can't multiply value of key '{key}' "
-                                f"by non-int of type '{type(other).__name__}'")
+                raise TypeError(f"can't multiply value of key '{key}': "
+                                f"instance of type {type(value).__name__} does not implement __mul__()")
         return new
 
+    def __rmul__(self, other: int):
+        return self.__mul__(other)
+
     def crop(self, *keys):
-        """Deletes provided keys from the dictionary and returns new ExtendedDict."""
+        """Returns new copy of ExtendedDict without provided keys."""
         new = self.copy()
         for key in keys:
             new.pop(key, None)
         return new
 
     def add(self, __m=None, /, **kwargs):
-        """Return new copy of ExtendedDict and add provided dictionary to it."""
+        """Returns new copy of ExtendedDict and adds provided dictionary to it."""
         new = self.copy()
         new.update(__m, **kwargs)
         return new
 
     def replace(self, key, value):
-        """Return new copy of ExtendedDict and replace provided key in it."""
+        """Returns new copy of ExtendedDict and replaces provided key in it."""
         new = self.copy()
         new[key] = value
         return new
 
-    def update(self, __m=None, /, **kwargs) -> None:
-        if __m:
-            dict.update(self, RecursiveConverter(__m, self.__class__),
-                        **RecursiveConverter(kwargs, self.__class__))
+    def update(self, __m: Mapping | Iterable = None, /, **kwargs) -> None:
+        if isinstance(__m, Mapping):
+            for key, value in __m.items():
+                self[key] = value
+        elif isinstance(__m, Iterable):
+            for key, value in __m:
+                self[key] = value
         else:
-            dict.update(self, **RecursiveConverter(kwargs, self.__class__))
+            for key, value in kwargs.items():
+                self[key] = value
 
     def copy(self):
         """Works as copy.deepcopy()"""
         return self.__class__(self)
 
     def sort(self, reverse=False):
-        """Return new instance and recursively sort all dictionaries keys
-        and arrays inside it."""
+        """Returns new copy of ExtendedDict and recursively sorts all the dictionaries' keys and the arrays inside it."""
         return RecursiveSort(self, __reverse__=reverse)
 
 
