@@ -1,4 +1,5 @@
 from copy import deepcopy
+from typing import Iterable, Mapping
 
 
 ARRAYS = (list, tuple, set)
@@ -36,17 +37,18 @@ class ExtendedDict(dict):
         исходный словарь, а возвращать новый экземпляр с изменениями.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # All inner dictionaries will be recursively converted to ExtendedDict.
-        for key, value in self.items():
-            self[key] = value
+    def __init__(self, seq: Mapping | Iterable = None, **kwargs):
+        super().__init__()
+        self.update(seq, **kwargs)
 
     def __deepcopy__(self, memo):
-        return self.__class__(deepcopy(dict(self), memo=memo))
+        # Possibly incorrect implementation because shared structures are not handled correctly,
+        # so let's keep previous version just in case:
+        # return self.__class__(deepcopy(dict(self), memo=memo))
+        return self.copy()
 
     def __getattr__(self, item):
-        if item in self.keys():
+        if item in self:
             return self[item]
         else:
             return dict.__getattribute__(self, item)
@@ -55,55 +57,64 @@ class ExtendedDict(dict):
         self[key] = value
 
     def __setitem__(self, key, value):
+        # All inner dictionaries will be recursively converted to ExtendedDict.
         dict.__setitem__(self, key, RecursiveConverter(value, self.__class__))
 
-    def __mul__(self, other):
+    def __mul__(self, other: int):
         """
         Returns new instance of ExtendedDict instantiated from 'self' where all
-        values of root keys are multiplied on value of 'other' (not recursive).
+        values of root keys are multiplied by value of 'other' (not recursive).
         """
+        if not isinstance(other, int):
+            raise TypeError(f"Can be multiplied only by integers, not by {type(other).__name__}")
         new = self.copy()
         for key, value in new.items():
             try:
                 new[key] = value * other
             except TypeError:
-                raise TypeError(f"can't multiply value of key '{key}' "
-                                f"by non-int of type '{type(other).__name__}'")
+                raise TypeError(f"can't multiply value of key '{key}': "
+                                f"instance of type {type(value).__name__} does not implement __mul__()")
         return new
 
+    def __rmul__(self, other: int):
+        return self.__mul__(other)
+
     def crop(self, *keys):
-        """Deletes provided keys from the dictionary and returns new ExtendedDict."""
+        """Returns new copy of ExtendedDict without provided keys."""
         new = self.copy()
         for key in keys:
             new.pop(key, None)
         return new
 
     def add(self, __m=None, /, **kwargs):
-        """Return new copy of ExtendedDict and add provided dictionary to it."""
+        """Returns new copy of ExtendedDict and adds provided dictionary to it."""
         new = self.copy()
         new.update(__m, **kwargs)
         return new
 
     def replace(self, key, value):
-        """Return new copy of ExtendedDict and replace provided key in it."""
+        """Returns new copy of ExtendedDict and replaces provided key in it."""
         new = self.copy()
         new[key] = value
         return new
 
-    def update(self, __m=None, /, **kwargs) -> None:
-        if __m:
-            dict.update(self, RecursiveConverter(__m, self.__class__),
-                        **RecursiveConverter(kwargs, self.__class__))
+    def update(self, __m: Mapping | Iterable = None, /, **kwargs) -> None:
+        if isinstance(__m, Mapping):
+            for key, value in __m.items():
+                self[key] = value
+        elif isinstance(__m, Iterable):
+            for key, value in __m:
+                self[key] = value
         else:
-            dict.update(self, **RecursiveConverter(kwargs, self.__class__))
+            for key, value in kwargs.items():
+                self[key] = value
 
     def copy(self):
         """Works as copy.deepcopy()"""
         return self.__class__(self)
 
     def sort(self, reverse=False):
-        """Return new instance and recursively sort all dictionaries keys
-        and arrays inside it."""
+        """Returns new copy of ExtendedDict and recursively sorts all the dictionaries' keys and the arrays inside it."""
         return RecursiveSort(self, __reverse__=reverse)
 
 
